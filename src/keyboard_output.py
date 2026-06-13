@@ -16,6 +16,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 _held_keys: set[str] = set()
+_MODIFIER_ORDER = ("ctrl", "control", "shift", "alt", "option", "cmd", "command", "win", "super")
+_MODIFIER_KEYS = {
+    "ctrl", "control", "ctrl_l", "ctrl_r",
+    "shift", "shift_l", "shift_r",
+    "alt", "alt_l", "alt_r", "option",
+    "cmd", "command", "cmd_l", "cmd_r", "windows", "win", "super",
+}
 
 # ---------------------------------------------------------------------------
 # Backend selection
@@ -222,6 +229,27 @@ def send_combination(keys: list[str], hold: float = 0.05) -> None:
         _held_keys.add(k)
 
     logger.debug("combination: %s", "+".join(keys))
+
+
+def tap_with_held_modifiers(key: str) -> None:
+    """Tap a key while explicitly including currently held modifier keys."""
+    modifiers = sorted(
+        (k for k in _held_keys if k.lower().strip() in _MODIFIER_KEYS),
+        key=_modifier_sort_key,
+    )
+    if modifiers:
+        send_combination([*modifiers, key])
+        logger.debug("tapped with modifiers: %s+%s", "+".join(modifiers), key)
+    else:
+        tap(key)
+
+
+def _modifier_sort_key(key: str) -> tuple[int, str]:
+    lower = key.lower().strip()
+    for i, prefix in enumerate(_MODIFIER_ORDER):
+        if lower.startswith(prefix):
+            return (i, lower)
+    return (len(_MODIFIER_ORDER), lower)
 
 
 def release_all() -> None:

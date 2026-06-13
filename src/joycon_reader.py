@@ -18,6 +18,7 @@ from .constants import (
     BUTTON_NAMES,
     BUTTON_NAMES_BY_MODE,
     SNAPBACK_FRAMES,
+    get_button_indices,
 )
 from .joystick_handler import apply_deadzone, get_direction
 from .key_mapper import KeyMapper
@@ -322,22 +323,42 @@ def run_polling_loop(
                 if joystick.get_button(i):
                     current_buttons.add(i)
 
+            stick_activation_name = config.get("stick_activation_button")
+            stick_activation_idx = None
+            if stick_activation_name:
+                stick_activation_idx = get_button_indices(current_mode).get(stick_activation_name)
+
             pressed = current_buttons - prev_buttons
             released = prev_buttons - current_buttons
 
             for btn_idx in sorted(pressed):
+                if btn_idx == stick_activation_idx:
+                    logger.debug("stick activation DOWN [%s]", stick_activation_name)
+                    continue
                 key_mapper.button_down(btn_idx)
 
             for btn_idx in sorted(released):
+                if btn_idx == stick_activation_idx:
+                    logger.debug("stick activation UP [%s]", stick_activation_name)
+                    continue
                 key_mapper.button_up(btn_idx)
 
             prev_buttons = current_buttons
 
             # --- Stick polling ---
+            deadzone = config.get("deadzone", deadzone)
+            poll_interval = max(config.get("poll_interval", poll_interval), 0.001)
+            stick_mode = config.get("stick_mode", stick_mode)
             raw_x = joystick.get_axis(axis_x) - baseline_x
             raw_y = joystick.get_axis(axis_y) - baseline_y
             filt_x, filt_y = apply_deadzone(raw_x, raw_y, deadzone)
             direction = get_direction(filt_x, filt_y, stick_mode)
+            if (
+                stick_activation_idx is not None
+                and stick_activation_idx not in current_buttons
+                and not key_mapper.wants_stick_input()
+            ):
+                direction = None
 
             if direction != prev_direction:
                 if direction is None:

@@ -303,6 +303,6 @@ DEFAULT_CONFIGS: dict[str, dict] = {
     "dual": DEFAULT_CONFIG_DUAL,
 }
 
-VALID_ACTIONS = ("tap", "hold", "auto", "combination", "sequence", "window_switch", "macro", "exec")
+VALID_ACTIONS = ("tap", "hold", "auto", "combination", "sequence", "window_switch", "app_switcher", "macro", "exec")
 
 __version__ = "1.1.0"

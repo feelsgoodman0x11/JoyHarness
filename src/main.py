@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import os
 import sys
@@ -55,6 +56,8 @@ from .tray_icon import create_tray_icon, run_tray
 
 logger = logging.getLogger(__name__)
 
+CONFIG_RELOAD_INTERVAL = 1.0
+
 
 def list_controls(config: dict) -> None:
     """Print all configured button/direction mappings."""
@@ -65,12 +68,18 @@ def list_controls(config: dict) -> None:
     print(f"\nActive profile: {profile_label} ({active_profile})")
 
     mappings = config.get("mappings", {})
+    stick_activation_button = config.get("stick_activation_button")
 
     print("\n=== Button Mappings ===")
     for btn_name, mapping in mappings.get("buttons", {}).items():
+        if btn_name == stick_activation_button:
+            print(f"  {btn_name:8s} [stick_gate ] → enable stick")
+            continue
         action = mapping["action"]
         if action == "combination":
             target = "+".join(mapping["keys"])
+        elif action == "app_switcher":
+            target = "native cmd+tab"
         else:
             target = mapping.get("key", "?")
         print(f"  {btn_name:8s} [{action:11s}] → {target}")
@@ -86,6 +95,8 @@ def list_controls(config: dict) -> None:
 
     print(f"\nDeadzone: {config.get('deadzone', 0.15)}")
     print(f"Stick mode: {config.get('stick_mode', '4dir')}")
+    print(f"Stick activation: {stick_activation_button or 'always on'}")
+    print(f"Switch interval: {config.get('switch_scroll_interval', 400)}ms")
     print(f"Poll interval: {config.get('poll_interval', 0.01) * 1000:.0f}ms")
 
     profiles = config.get("profiles", {})
@@ -240,10 +251,12 @@ def main() -> None:
 
     js = find_joycon(args.joystick)
     if js is None:
-        print("No Joy-Con detected.")
+        print("No Joy-Con detected. Waiting for connection...")
         print(_get_pairing_instructions())
-        pygame.quit()
-        sys.exit(1)
+        js = wait_for_reconnection(args.joystick)
+        if js is None:
+            pygame.quit()
+            sys.exit(1)
 
     print(f"Controller: {js.get_name()}")
     print(f"Buttons: {js.get_numbuttons()}, Axes: {js.get_numaxes()}")
@@ -290,14 +303,33 @@ def main() -> None:
         keep_alive_manager=keep_alive_manager,
     )
     key_mapper.set_tk_root(gui.root)
+    on_mode_change = gui.update_connection_mode
 
     # Start polling loop in background thread (after GUI so callback is available)
     poll_thread = threading.Thread(
         target=_run_polling,
-        args=(js, key_mapper, config, stop_event, gui.update_connection_mode),
+        args=(js, key_mapper, config, stop_event, on_mode_change),
         daemon=True,
     )
     poll_thread.start()
+
+    # Watch the active JSON config and apply edits without restarting.
+    config_reload_thread = None
+    if config_path is not None:
+        config_reload_thread = threading.Thread(
+            target=_run_config_reloader,
+            args=(
+                config_path,
+                config,
+                key_mapper,
+                keep_alive_manager,
+                stop_event,
+                args.deadzone,
+                on_mode_change,
+            ),
+            daemon=True,
+        )
+        config_reload_thread.start()
 
     # Start tray icon in background thread (Windows only)
     # macOS: pystray requires NSApplication.run on the main thread, which
@@ -324,6 +356,8 @@ def main() -> None:
     if icon is not None:
         icon.stop()
     poll_thread.join(timeout=2.0)
+    if config_reload_thread is not None:
+        config_reload_thread.join(timeout=2.0)
     battery_reader.join(timeout=2.0)
     keep_alive_manager.join(timeout=2.0)
     key_mapper.release_all()
@@ -344,6 +378,81 @@ def _run_polling(
         run_polling_loop(joystick, key_mapper, config, stop_event, on_mode_change=on_mode_change)
     except Exception:
         logger.exception("Polling thread error")
+
+
+def _run_config_reloader(
+    config_path: str,
+    config: dict,
+    key_mapper: KeyMapper,
+    keep_alive_manager: KeepAliveManager,
+    stop_event: threading.Event,
+    deadzone_override: float | None,
+    on_mode_change=None,
+) -> None:
+    """Hot-reload a JSON config file and update runtime state in-place."""
+    path = Path(config_path)
+    try:
+        last_mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        logger.warning("Config hot reload disabled; cannot stat %s", path)
+        return
+
+    logger.info("Config hot reload watching: %s", path)
+
+    while not stop_event.is_set():
+        stop_event.wait(CONFIG_RELOAD_INTERVAL)
+        if stop_event.is_set():
+            break
+
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            logger.warning("Config file unavailable; keeping current config: %s", path)
+            continue
+
+        if mtime_ns == last_mtime_ns:
+            continue
+
+        try:
+            new_config = load_config(str(path))
+            if deadzone_override is not None:
+                new_config["deadzone"] = deadzone_override
+            _apply_runtime_config(new_config, config, key_mapper, keep_alive_manager)
+            last_mtime_ns = mtime_ns
+            if on_mode_change:
+                on_mode_change(config.get("active_profile", "single_right"))
+            logger.info("Config hot reloaded: %s", path)
+        except Exception as exc:
+            logger.warning("Config hot reload failed; keeping current config: %s", exc)
+
+
+def _apply_runtime_config(
+    new_config: dict,
+    config: dict,
+    key_mapper: KeyMapper,
+    keep_alive_manager: KeepAliveManager,
+) -> None:
+    """Apply a freshly loaded config to objects that cache runtime settings."""
+    current_mode = config.get("active_profile", "single_right")
+    profile = get_profile(new_config, current_mode)
+    profile_mappings = profile.get("mappings", new_config.get("mappings", {}))
+    new_config["mappings"] = profile_mappings
+    new_config["active_profile"] = current_mode
+
+    config.clear()
+    config.update(copy.deepcopy(new_config))
+
+    from .window_switcher import set_known_apps
+
+    known_apps = config.get("known_apps")
+    if known_apps:
+        set_known_apps(known_apps)
+
+    if "selected_apps" in config:
+        key_mapper._window_cycler.app_names = list(config.get("selected_apps", []))
+
+    keep_alive_manager.set_enabled(config.get("keep_alive_enabled", True))
+    key_mapper.switch_profile(config, current_mode)
 
 
 if __name__ == "__main__":

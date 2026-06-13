@@ -130,6 +130,14 @@ class SwitcherOverlay:
         self._schedule(self._highlight)
         return self._windows[self._selected_index]
 
+    def move_prev(self) -> WindowInfo | None:
+        """Move selection to previous item (thread-safe)."""
+        if not self._windows:
+            return None
+        self._selected_index = (self._selected_index - 1) % len(self._windows)
+        self._schedule(self._highlight)
+        return self._windows[self._selected_index]
+
     @property
     def selected(self) -> WindowInfo | None:
         if not self._windows:

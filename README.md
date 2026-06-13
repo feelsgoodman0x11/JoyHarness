@@ -14,7 +14,7 @@
 
 - **多手柄模式** — 自动检测右手柄 / 左手柄 / 双手柄，切换对应键位配置
 - **热插拔** — 断开重连自动恢复
-- **丰富的按键映射** — tap、hold、auto（短按/长按自适应）、combination（组合键）、sequence（序列键）、macro（宏）、window_switch、exec（Shell 命令）
+- **丰富的按键映射** — tap、hold、auto（短按/长按自适应）、combination（组合键）、sequence（序列键）、app_switcher、macro（宏）、window_switch、exec（Shell 命令）
 - **摇杆映射** — 4/8 方向，可配死区
 - **窗口切换** — 快速切换指定应用窗口
 - **GUI 设置** — 可视化编辑键位映射
@@ -33,6 +33,7 @@
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
 
 依赖已按平台自动分流：Windows 安装 `keyboard`，macOS 安装 `pynput` + PyObjC。
@@ -46,20 +47,60 @@ pip install -r requirements.txt
 ### 运行
 
 ```bash
+joyharness
+```
+
+也兼容旧入口：
+
+```bash
 python -m src
 ```
+
+如果当前 `python` 缺少 `tkinter` / `_tkinter`，但仓库内的 `.venv` 可用，`python -m src` 会自动使用 `./.venv/bin/python`（Windows 为 `./.venv/Scripts/python.exe`）重新启动，避免因系统 Python 缺少 Tk 而直接失败。标准入口 `joyharness` 建议安装在 `.venv` 里使用。
 
 macOS 可双击 `start.command`，Windows 可双击 `start.vbs`。
 
 macOS 首次运行需在 **系统设置 → 隐私与安全性** 中授予 **辅助功能** 和 **输入监控** 权限。
 
+### macOS 开机自启 / 崩溃自启
+
+使用 LaunchAgent 跑在当前用户会话里。它会在登录时自动启动 JoyHarness；进程退出或崩溃后，launchd 会自动拉起。
+
+如果开机时 Joy-Con 还没连上，JoyHarness 会保持运行并等待手柄连接，不会因为未检测到 Joy-Con 而退出重启。
+
+安装并立即启动：
+
+```bash
+scripts/install-launch-agent.sh
+```
+
+查看状态和日志路径：
+
+```bash
+scripts/status-launch-agent.sh
+```
+
+卸载：
+
+```bash
+scripts/uninstall-launch-agent.sh
+```
+
+安装位置和日志：
+
+```text
+~/Library/LaunchAgents/com.joyharness.agent.plist
+~/Library/Logs/JoyHarness/stdout.log
+~/Library/Logs/JoyHarness/stderr.log
+```
+
 ### 常用命令行参数
 
 ```
-python -m src --discover        # 校准：显示按钮/轴的原始索引值
-python -m src --config my.json  # 使用自定义配置文件
-python -m src --list-controls   # 列出当前映射
-python -m src --verbose         # 调试日志
+joyharness --discover        # 校准：显示按钮/轴的原始索引值
+joyharness --config my.json  # 使用自定义配置文件
+joyharness --list-controls   # 列出当前映射
+joyharness --verbose         # 调试日志
 ```
 
 ## 配置
@@ -72,6 +113,15 @@ python -m src --verbose         # 调试日志
 - `default.json` — 内置默认
 
 程序启动时自动根据平台选择配置：优先 `user.json`，其次 `user-{platform}.json`。
+
+正常运行时会热加载当前配置文件。修改并保存 `config/user.json` 后，约 1 秒内自动生效，无需重启 `python -m src`。热加载会更新：
+
+- 按键和摇杆映射
+- `selected_apps` / `known_apps` 窗口切换目标
+- `deadzone`、`poll_interval`、`stick_mode`、`stick_activation_button`
+- `keep_alive_enabled`
+
+如果 JSON 暂时写坏或键名无效，程序会保留旧配置并在日志里提示；修好并再次保存后会继续加载。
 
 ### 连接模式
 
@@ -90,6 +140,7 @@ python -m src --verbose         # 调试日志
 | **auto** | 短按 = tap，长按 = hold。加 `repeat` 字段可连续重击 |
 | **combination** | 同时按多个键（如 Cmd+S） |
 | **sequence** | 按住修饰键 + 点击其他键（如 Alt+Tab） |
+| **app_switcher** | 原生 macOS Cmd+Tab 应用切换器 |
 | **window_switch** | 短按切下一个窗口，长按弹出选择器 |
 | **macro** | 预定义按键序列，可按前台窗口过滤 |
 | **exec** | 执行 Shell 命令（如 `open -a "Mission Control"`） |
@@ -98,23 +149,135 @@ python -m src --verbose         # 调试日志
 
 ```json
 {
-  "ZR": { "action": "hold", "key": "alt_r" },
+  "ZR": { "action": "hold", "key": "alt" },
   "Plus": { "action": "hold", "key": "cmd_r" },
-  "R": { "action": "exec", "command": ["open", "-a", "Mission Control"] },
-  "Y": { "action": "combination", "keys": ["cmd", "tab"] },
+  "R": { "action": "app_switcher" },
+  "SR": { "action": "combination", "keys": ["shift_l", "alt_l", "cmd_l"] },
+  "Y": { "action": "combination", "keys": ["cmd", "`"] },
   "Home": { "action": "combination", "keys": ["cmd", "space"] },
   "B": { "action": "auto", "key": "backspace", "repeat": 100 }
 }
 ```
+
+当前 `config/user.json` 的右手柄预设：
+
+| Joy-Con 按键 | 动作 |
+|--------------|------|
+| `R` | 原生 Cmd+Tab 应用切换器 |
+| `SR` | 触发 Typeless 监听快捷键：Left Shift + Left Option + Left Cmd |
+| `ZR` | 按住左 Option / Alt，配合摇杆左右可按词移动光标 |
+| `SL` + 摇杆 | 启用摇杆方向键，避免误触 |
+| `Home` | Cmd+Space，打开 Spotlight |
+| `Y` | Cmd+`，当前 App 内切换窗口 |
+| `B` | Backspace，长按连删 |
+| `A` | Enter |
+| `X` | Escape |
+| `RStick` | Tab |
+
+### 多应用切换
+
+`R` 使用 `app_switcher` 动作，行为等同键盘上的 Cmd+Tab：
+
+- 按住 `R`：按住 Cmd 并点一次 Tab，唤起 macOS 原生应用切换器
+- 按住 `R` 时摇杆右/下：Tab，选下一个 App
+- 按住 `R` 时摇杆左/上：Shift+Tab，选上一个 App
+- 按住摇杆方向不放：每 `switch_scroll_interval` 毫秒连续移动
+- 松开 `R`：释放 Cmd，切到当前选中的 App
+
+这个模式使用系统原生 App Switcher，会显示所有正在运行的 App，不受 `selected_apps` 限制。
+
+当前切换速度：
+
+```json
+{
+  "deadzone": 0.35,
+  "switch_scroll_interval": 160,
+  "stick_directions": {
+    "up": { "repeat": 180 },
+    "down": { "repeat": 180 },
+    "left": { "repeat": 180 },
+    "right": { "repeat": 180 }
+  }
+}
+```
+
+`deadzone` 越大，越不容易被轻微拨动触发。`switch_scroll_interval` 和 `repeat` 越大，连续移动越慢。建议范围：`deadzone` 用 `0.30` 到 `0.45`，`switch_scroll_interval` / `repeat` 用 `140` 到 `220`。
+
+`selected_apps` 只用于旧的 `window_switch` 动作。当前保留预设：
+
+```json
+["Codex", "Telegram", "Slack", "ghostty"]
+```
+
+要增删切换目标，修改 `config/user.json`：
+
+```json
+{
+  "known_apps": {
+    "Codex": "Codex",
+    "Telegram": "Telegram",
+    "Slack": "Slack",
+    "Ghostty": "ghostty",
+    "Typeless": "Typeless"
+  },
+  "selected_apps": ["Codex", "Telegram", "Slack", "ghostty"]
+}
+```
+
+`known_apps` 的值必须是 macOS 看到的应用进程名；本机 Ghostty 进程名是小写 `ghostty`。不确定时先运行 `python -m src --verbose`，或用 GUI 设置面板添加/勾选应用。`window_switch` 主要切应用窗口；跨 Space / 全屏窗口受 macOS 限制。
+
+### 摇杆防误触
+
+`stick_activation_button` 控制摇杆门控。当前设置为：
+
+```json
+{
+  "stick_activation_button": "SL"
+}
+```
+
+效果：只有按住 `SL` 时，摇杆方向才会触发键盘方向键。单独碰到摇杆不会输入。要恢复一直启用，改成 `null`。
+
+例外：按住 `R` 做原生 Cmd+Tab 应用切换时，摇杆会临时用于选择 App，不需要同时按 `SL`。
 
 > macOS 上部分系统快捷键（如 F3 → Mission Control）只响应硬件 HID 事件，不响应 pynput 合成的按键。这类场景请用 `exec` 动作。
 
 ## macOS 注意事项
 
 - **权限**：需要「辅助功能」和「输入监控」权限
+- **权限对象**：如果从终端运行 `python -m src`，需要给运行它的终端 App（Terminal / Ghostty / iTerm）授权；必要时也给 Python 或 `.venv/bin/python` 授权
+- **LaunchAgent 权限对象**：如果使用开机自启，需要给仓库内的 `.venv/bin/python` 授权「辅助功能」和「输入监控」
 - **进程名大小写敏感**：中文系统下微信进程名是 `微信`，不是 `WeChat`
 - **全屏窗口**：`window_switch` 只能看到当前 Space 的窗口
 - **SL/SR 侧键**：在 macOS 上 SDL2 检测不稳定，建议映射为其他功能
+
+### macOS 排查
+
+如果 `--discover` 能看到按钮，但按键没有输入到系统：
+
+1. 在「系统设置 → 隐私与安全性 → 辅助功能」授权运行 JoyHarness 的终端 App。
+2. 在「系统设置 → 隐私与安全性 → 输入监控」授权同一个终端 App。
+3. 完全退出终端 App，重新打开。
+4. 用下面命令测试键盘合成是否生效：
+
+```bash
+python - <<'PY'
+import time
+from pynput.keyboard import Controller
+print("Focus a text field within 3 seconds. Will type: joytest")
+time.sleep(3)
+Controller().type("joytest")
+print("Done")
+PY
+```
+
+如果文本框出现 `joytest`，键盘输出权限正常。再运行：
+
+```bash
+python -m src --verbose
+```
+
+按 Joy-Con 按键，日志中应能看到对应的 `tap` / `hold` / `combination` 动作。
 
 ## 项目结构
 

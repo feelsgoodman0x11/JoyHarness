@@ -1,10 +1,12 @@
 {
   "version": "1.0",
   "description": "Joy-Con R to keyboard mapping (macOS)",
-  "deadzone": 0.2,
+  "deadzone": 0.35,
   "poll_interval": 0.01,
+  "switch_scroll_interval": 160,
   "stick_mode": "4dir",
   "stick_enabled": true,
+  "stick_activation_button": "SL",
   "keep_alive_enabled": true,
   "mappings": {
     "buttons": {
@@ -25,20 +27,15 @@
         "action": "combination",
         "keys": [
           "cmd",
-          "tab"
+          "`"
         ]
       },
       "R": {
-        "action": "exec",
-        "command": [
-          "open",
-          "-a",
-          "Mission Control"
-        ]
+        "action": "app_switcher"
       },
       "ZR": {
         "action": "hold",
-        "key": "alt_r"
+        "key": "alt"
       },
       "Plus": {
         "action": "hold",
@@ -60,39 +57,50 @@
         "key": "cmd"
       },
       "SR": {
-        "action": "window_switch"
+        "action": "combination",
+        "keys": [
+          "shift_l",
+          "alt_l",
+          "cmd_l"
+        ]
       }
     },
     "stick_directions": {
       "up": {
         "action": "auto",
         "key": "down",
-        "repeat": 100
+        "repeat": 180
       },
       "down": {
         "action": "auto",
         "key": "up",
-        "repeat": 100
+        "repeat": 180
       },
       "left": {
         "action": "auto",
         "key": "left",
-        "repeat": 100
+        "repeat": 180
       },
       "right": {
         "action": "auto",
         "key": "right",
-        "repeat": 100
+        "repeat": 180
       }
     }
   },
   "known_apps": {
-    "Ghostty": "Ghostty",
-    "微信": "微信",
-    "飞书": "飞书",
-    "反重力": "Antigravity"
+    "Codex": "Codex",
+    "Telegram": "Telegram",
+    "Slack": "Slack",
+    "Ghostty": "ghostty",
+    "Typeless": "Typeless"
   },
-  "selected_apps": [],
+  "selected_apps": [
+    "Codex",
+    "Telegram",
+    "Slack",
+    "ghostty"
+  ],
   "profiles": {
     "single_right": {
       "mappings": {
@@ -114,20 +122,15 @@
             "action": "combination",
             "keys": [
               "cmd",
-              "tab"
+              "`"
             ]
           },
           "R": {
-            "action": "exec",
-            "command": [
-              "open",
-              "-a",
-              "Mission Control"
-            ]
+            "action": "app_switcher"
           },
           "ZR": {
             "action": "hold",
-            "key": "alt_r"
+            "key": "alt"
           },
           "Plus": {
             "action": "hold",
@@ -149,29 +152,34 @@
             "key": "cmd"
           },
           "SR": {
-            "action": "window_switch"
+            "action": "combination",
+            "keys": [
+              "shift_l",
+              "alt_l",
+              "cmd_l"
+            ]
           }
         },
         "stick_directions": {
           "up": {
             "action": "auto",
             "key": "down",
-            "repeat": 100
+            "repeat": 180
           },
           "down": {
             "action": "auto",
             "key": "up",
-            "repeat": 100
+            "repeat": 180
           },
           "left": {
             "action": "auto",
             "key": "left",
-            "repeat": 100
+            "repeat": 180
           },
           "right": {
             "action": "auto",
             "key": "right",
-            "repeat": 100
+            "repeat": 180
           }
         }
       }
@@ -195,7 +203,7 @@
             "action": "combination",
             "keys": [
               "cmd",
-              "tab"
+              "`"
             ]
           },
           "L": {
@@ -272,20 +280,15 @@
             "action": "combination",
             "keys": [
               "cmd",
-              "tab"
+              "`"
             ]
           },
           "R": {
-            "action": "exec",
-            "command": [
-              "open",
-              "-a",
-              "Mission Control"
-            ]
+            "action": "app_switcher"
           },
           "ZR": {
             "action": "hold",
-            "key": "alt_r"
+            "key": "alt"
           },
           "L": {
             "action": "hold",
@@ -338,7 +341,12 @@
             "key": "cmd"
           },
           "SR_R": {
-            "action": "window_switch"
+            "action": "combination",
+            "keys": [
+              "shift_l",
+              "alt_l",
+              "cmd_l"
+            ]
           }
         },
         "stick_directions": {

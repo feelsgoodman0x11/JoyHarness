@@ -37,13 +37,17 @@ class KeyMapper:
         self._mode = mode
         self._button_indices = get_button_indices(mode)
         self._button_names = get_button_names(mode)
+        self._ws_move_interval = config.get("switch_scroll_interval", 400) / 1000.0
 
         mappings = config.get("mappings", {})
+        stick_activation_button = config.get("stick_activation_button")
         long_threshold = config.get("long_press_threshold", LONG_PRESS_THRESHOLD)
 
         # Build button index → mapping dict
         self._button_mappings: dict[int, dict] = {}
         for btn_name, mapping in mappings.get("buttons", {}).items():
+            if btn_name == stick_activation_button:
+                continue
             if btn_name in self._button_indices:
                 self._button_mappings[self._button_indices[btn_name]] = mapping
 
@@ -87,6 +91,9 @@ class KeyMapper:
         self._ws_overlay_active: bool = False
         self._ws_last_move: float = 0.0
         self._ws_move_interval: float = config.get("switch_scroll_interval", 400) / 1000.0
+        self._app_switcher_button_index: int = -1
+        self._app_switcher_last_move: float = 0.0
+        self._app_switcher_direction: str | None = None
 
         logger.info(
             "KeyMapper initialized: %d button mappings, %d direction mappings, "
@@ -183,6 +190,14 @@ class KeyMapper:
             self._ws_overlay_active = False
             logger.debug("window_switch DOWN [%s] (waiting)", btn_name)
 
+        elif action == "app_switcher":
+            keyboard_output.press("cmd")
+            time.sleep(0.005)
+            keyboard_output.tap("tab", duration=0.005)
+            self._app_switcher_button_index = button_index
+            self._app_switcher_last_move = time.monotonic()
+            logger.debug("app_switcher DOWN [%s] → cmd+tab", btn_name)
+
         elif action == "macro":
             self._execute_macro(mapping, btn_name)
 
@@ -207,6 +222,14 @@ class KeyMapper:
             key = self._active_holds.pop(button_index)
             keyboard_output.release(key)
             logger.debug("hold UP [%s] → %s released", btn_name, key)
+            return
+
+        # Handle native macOS Cmd+Tab app switcher release
+        if button_index == self._app_switcher_button_index:
+            keyboard_output.release("cmd")
+            self._app_switcher_button_index = -1
+            self._app_switcher_direction = None
+            logger.debug("app_switcher UP [%s] → cmd released", btn_name)
             return
 
         # Handle auto release
@@ -309,25 +332,17 @@ class KeyMapper:
         for k in list(self._stick_repeat.keys()):
             info = self._stick_repeat[k]
             if now - info["last_time"] >= info["interval"]:
-                keyboard_output.tap(info["key"])
+                keyboard_output.tap_with_held_modifiers(info["key"])
                 info["last_time"] = now
                 logger.debug("stick repeat [%s] → %s", k[1], info["key"])
 
-        # Window switch: long press → show overlay and cycle
+        # Window switch: long press → show overlay. Stick directions move selection.
         if self._ws_held and not self._ws_overlay_active and self._switcher_overlay:
             if now - self._ws_press_time >= self._long_threshold:
-                windows = find_windows(self._window_cycler.app_names)
-                if windows:
-                    initial = self._find_current_window_index(windows)
-                    self._switcher_overlay.show(windows, initial_index=initial)
-                    self._ws_overlay_active = True
-                    self._ws_last_move = now
-                    logger.info("window_switch overlay: %d windows", len(windows))
+                self._show_window_switch_overlay(now)
 
-        if self._ws_held and self._ws_overlay_active and self._switcher_overlay:
-            if now - self._ws_last_move >= self._ws_move_interval:
-                self._switcher_overlay.move_next()
-                self._ws_last_move = now
+        if self._app_switcher_direction and self._app_switcher_button_index >= 0:
+            self._move_app_switcher(self._app_switcher_direction, now)
 
     def _release_stick_auto(self) -> None:
         """Release current stick hold key and cancel repeat."""
@@ -343,6 +358,12 @@ class KeyMapper:
         if not self._stick_enabled:
             return
 
+        if self._handle_window_switch_stick(direction):
+            return
+
+        if self._handle_app_switcher_stick(direction):
+            return
+
         # Release any previously active stick direction hold
         self._release_stick_auto()
 
@@ -352,13 +373,13 @@ class KeyMapper:
 
         action = mapping["action"]
         if action == "tap":
-            keyboard_output.tap(mapping["key"])
+            keyboard_output.tap_with_held_modifiers(mapping["key"])
             logger.debug("stick [%s] → %s", direction, mapping["key"])
         elif action == "auto":
             key = mapping["key"]
             repeat_ms = mapping.get("repeat", 100)
             # Tap once immediately, then repeat at interval via poll()
-            keyboard_output.tap(key)
+            keyboard_output.tap_with_held_modifiers(key)
             self._active_holds[("stick", direction)] = key
             self._stick_repeat[("stick", direction)] = {
                 "key": key,
@@ -370,10 +391,77 @@ class KeyMapper:
             keyboard_output.send_combination(mapping["keys"])
             logger.debug("stick [%s] → %s", direction, "+".join(mapping["keys"]))
 
+    def wants_stick_input(self) -> bool:
+        """Return True when stick input should bypass the normal activation gate."""
+        return self._ws_held or self._app_switcher_button_index >= 0
+
+    def _show_window_switch_overlay(self, now: float | None = None) -> bool:
+        """Show the window switch overlay if possible."""
+        if not self._switcher_overlay:
+            return False
+        windows = find_windows(self._window_cycler.app_names)
+        if not windows:
+            logger.warning("window_switch overlay → no windows found")
+            return False
+        initial = self._find_current_window_index(windows)
+        self._switcher_overlay.show(windows, initial_index=initial)
+        self._ws_overlay_active = True
+        self._ws_last_move = now if now is not None else time.monotonic()
+        logger.info("window_switch overlay: %d windows", len(windows))
+        return True
+
+    def _handle_window_switch_stick(self, direction: str) -> bool:
+        """Use the stick to move the window switch overlay while SR is held."""
+        if not self._ws_held:
+            return False
+
+        now = time.monotonic()
+        if not self._ws_overlay_active:
+            if not self._show_window_switch_overlay(now):
+                return True
+
+        if not self._switcher_overlay or now - self._ws_last_move < self._ws_move_interval:
+            return True
+
+        if direction in ("right", "down", "down_right", "up_right"):
+            self._switcher_overlay.move_next()
+            logger.debug("window_switch stick [%s] → next", direction)
+        elif direction in ("left", "up", "down_left", "up_left"):
+            self._switcher_overlay.move_prev()
+            logger.debug("window_switch stick [%s] → previous", direction)
+
+        self._ws_last_move = now
+        return True
+
+    def _handle_app_switcher_stick(self, direction: str) -> bool:
+        """Use the stick to move the native macOS Cmd+Tab app switcher."""
+        if self._app_switcher_button_index < 0:
+            return False
+        force = direction != self._app_switcher_direction
+        self._app_switcher_direction = direction
+        self._move_app_switcher(direction, time.monotonic(), force=force)
+        return True
+
+    def _move_app_switcher(self, direction: str, now: float, force: bool = False) -> None:
+        if not force and now - self._app_switcher_last_move < self._ws_move_interval:
+            return
+
+        if direction in ("right", "down", "down_right", "up_right"):
+            keyboard_output.tap("tab", duration=0.005)
+            logger.debug("app_switcher stick [%s] → tab", direction)
+        elif direction in ("left", "up", "down_left", "up_left"):
+            keyboard_output.press("shift")
+            keyboard_output.tap("tab", duration=0.005)
+            keyboard_output.release("shift")
+            logger.debug("app_switcher stick [%s] → shift+tab", direction)
+
+        self._app_switcher_last_move = now
+
     def stick_centered(self) -> None:
         """Handle stick returning to center."""
         if not self._stick_enabled:
             return
+        self._app_switcher_direction = None
         self._release_stick_auto()
         logger.debug("stick centered")
 
@@ -389,9 +477,12 @@ class KeyMapper:
         self._button_names = get_button_names(mode)
 
         mappings = config.get("mappings", {})
+        stick_activation_button = config.get("stick_activation_button")
 
         self._button_mappings.clear()
         for btn_name, mapping in mappings.get("buttons", {}).items():
+            if btn_name == stick_activation_button:
+                continue
             if btn_name in self._button_indices:
                 self._button_mappings[self._button_indices[btn_name]] = mapping
 
@@ -410,6 +501,10 @@ class KeyMapper:
         self._ws_held = False
         self._ws_button_index = -1
         self._ws_overlay_active = False
+        if self._app_switcher_button_index >= 0:
+            keyboard_output.release("cmd")
+            self._app_switcher_button_index = -1
+            self._app_switcher_direction = None
         if self._switcher_overlay:
             self._switcher_overlay.hide()
         # Release sequences in reverse

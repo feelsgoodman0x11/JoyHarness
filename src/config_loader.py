@@ -95,7 +95,16 @@ def merge_with_defaults(user_config: dict) -> dict:
     result = copy.deepcopy(DEFAULT_CONFIG)
 
     # Override top-level settings
-    for key in ("version", "description", "deadzone", "poll_interval", "stick_mode", "stick_enabled", "keep_alive_enabled"):
+    for key in (
+        "version",
+        "description",
+        "deadzone",
+        "poll_interval",
+        "stick_mode",
+        "stick_enabled",
+        "stick_activation_button",
+        "keep_alive_enabled",
+    ):
         if key in user_config:
             result[key] = user_config[key]
 
@@ -203,6 +212,17 @@ def validate_config(config: dict) -> list[str]:
     poll_interval = config.get("poll_interval", 0.01)
     if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
         errors.append(f"poll_interval must be a positive number, got {poll_interval}")
+
+    stick_activation_button = config.get("stick_activation_button")
+    if stick_activation_button is not None:
+        if not isinstance(stick_activation_button, str):
+            errors.append("stick_activation_button must be a button name string or null")
+        else:
+            all_button_names = set()
+            for names in BUTTON_NAMES_BY_MODE.values():
+                all_button_names.update(names.values())
+            if stick_activation_button not in all_button_names:
+                errors.append(f"Unknown stick_activation_button: '{stick_activation_button}'")
 
     # Validate profiles (new format)
     profiles = config.get("profiles")

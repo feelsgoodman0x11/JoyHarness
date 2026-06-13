@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joyharness"
+version = "1.0.0"
+description = "Map Nintendo Switch Joy-Con input to keyboard shortcuts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "pygame>=2.6.0",
+  "pystray>=0.19.0",
+  "Pillow>=10.0.0",
+  "ttkbootstrap>=1.10.0",
+  "hidapi>=0.14.0",
+  "keyboard>=0.13.5; sys_platform == 'win32'",
+  "pynput>=1.7.6; sys_platform == 'darwin'",
+  "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+joyharness = "src.main:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
